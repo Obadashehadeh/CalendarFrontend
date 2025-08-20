@@ -43,11 +43,10 @@ function App() {
   useEffect(() => {
     let syncInterval;
     
-    // Only use periodic sync if webhook is not active
     if (isAuthenticated && accessToken && userEmail && !webhookStatus.active) {
       syncInterval = setInterval(() => {
-        syncFromGoogle(accessToken, userEmail, true); // Silent sync
-      }, 60000); // Every 60 seconds
+        syncFromGoogle(accessToken, userEmail, true);
+      }, 60000);
     }
     
     return () => {
@@ -69,7 +68,6 @@ function App() {
       setIsAuthenticated(true);
       window.history.replaceState({}, document.title, window.location.pathname);
       
-      // Initial sync and webhook setup after auth
       setTimeout(async () => {
         await syncFromGoogle(token, userId, false);
         await setupWebhook(token, userId);
@@ -118,7 +116,6 @@ function App() {
       setAccessToken(savedAuth.token);
       setUserEmail(savedAuth.email);
       setIsAuthenticated(true);
-      // Check webhook status
       checkWebhookStatus(savedAuth.email);
     }
   };
@@ -140,7 +137,6 @@ function App() {
     try {
       showNotification('Setting up real-time sync...', 'info');
       
-      // Use the actual user email for webhook setup
       const response = await axios.post(`http://localhost:3000/webhook/setup/${userId}?accessToken=${encodeURIComponent(token)}`);
       
       if (response.data.success) {
@@ -148,14 +144,12 @@ function App() {
         setWebhookStatus({ active: true, channels: 1 });
       }
     } catch (error) {
-      console.error('Webhook setup failed:', error);
       showNotification('Real-time sync setup failed. Using periodic sync instead.', 'warning');
     }
   };
   
   const checkWebhookStatus = async (userId) => {
     try {
-      // Use the actual user email for webhook status check
       const response = await axios.get(`http://localhost:3000/webhook/status/${userId}`);
       
       if (response.data.success) {
@@ -166,7 +160,6 @@ function App() {
         });
       }
     } catch (error) {
-      console.error('Failed to check webhook status:', error);
       setWebhookStatus({ active: false, channels: 0 });
     }
   };
@@ -174,7 +167,6 @@ function App() {
   const fetchEvents = async () => {
     try {
       setLoading(true);
-      // Use the actual user email instead of hardcoded "test"
       const userId = userEmail || 'test';
       const response = await axios.get(`http://localhost:3000/events?userId=${userId}`);
       
@@ -200,7 +192,6 @@ function App() {
       setEvents(formattedEvents);
     } catch (error) {
       showNotification('Failed to load events', 'error');
-      console.error('Failed to fetch events:', error);
     } finally {
       setLoading(false);
     }
@@ -229,7 +220,6 @@ function App() {
       } else if (!silent) {
         showNotification('Failed to sync with Google Calendar', 'error');
       }
-      console.error('Sync failed:', error);
     } finally {
       if (!silent) {
         setSyncing(false);
@@ -311,7 +301,6 @@ function App() {
         } else {
           showNotification('Failed to delete event', 'error');
         }
-        console.error('Delete failed:', error);
       }
     }
   };
@@ -364,7 +353,6 @@ function App() {
       } else {
         showNotification('Failed to save event', 'error');
       }
-      console.error('Save failed:', error);
     }
   };
   

@@ -9,10 +9,9 @@ import {
   TextField,
   Box,
   Typography,
-  IconButton,
-  Alert
+  IconButton
 } from '@mui/material';
-import { Edit, Delete, Add } from '@mui/icons-material';
+import { Edit, Delete, Add, ChevronLeft, ChevronRight } from '@mui/icons-material';
 
 function App() {
   const [events, setEvents] = useState([]);
@@ -29,12 +28,27 @@ function App() {
   const [accessToken, setAccessToken] = useState(null);
   const [userEmail, setUserEmail] = useState(null);
   const [currentDate, setCurrentDate] = useState(new Date());
-  const [debugInfo, setDebugInfo] = useState('');
   
   useEffect(() => {
-    checkAuthStatus();
+    initializeAuth();
     fetchEvents();
   }, []);
+  
+  useEffect(() => {
+    let syncInterval;
+    
+    if (isAuthenticated && accessToken && userEmail) {
+      syncInterval = setInterval(() => {
+        syncFromGoogle(accessToken, userEmail);
+      }, 30000); // Sync every 30 seconds
+    }
+    
+    return () => {
+      if (syncInterval) {
+        clearInterval(syncInterval);
+      }
+    };
+  }, [isAuthenticated, accessToken, userEmail]);
   
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
@@ -42,34 +56,64 @@ function App() {
     const userId = urlParams.get('userId');
     
     if (token && userId) {
-      console.log('🔑 OAuth callback received!');
-      console.log('🔑 Token:', token.substring(0, 30) + '...');
-      console.log('👤 User:', userId);
-      
+      saveAuthToStorage(token, userId);
       setAccessToken(token);
       setUserEmail(userId);
       setIsAuthenticated(true);
-      setDebugInfo(`Token: ${token.substring(0, 30)}... | User: ${userId}`);
-      
       window.history.replaceState({}, document.title, window.location.pathname);
       syncFromGoogle(token, userId);
     }
   }, []);
   
-  const checkAuthStatus = () => {
-    const currentAuth = {
-      isAuthenticated,
-      hasToken: !!accessToken,
-      userEmail,
-      tokenLength: accessToken ? accessToken.length : 0
-    };
-    console.log('🔍 Current auth status:', currentAuth);
-    setDebugInfo(`Auth: ${isAuthenticated} | Token: ${!!accessToken} | User: ${userEmail || 'None'}`);
+  const saveAuthToStorage = (token, email) => {
+    localStorage.setItem('calendar_access_token', token);
+    localStorage.setItem('calendar_user_email', email);
+    localStorage.setItem('calendar_auth_time', Date.now().toString());
+  };
+  
+  const loadAuthFromStorage = () => {
+    const token = localStorage.getItem('calendar_access_token');
+    const email = localStorage.getItem('calendar_user_email');
+    const authTime = localStorage.getItem('calendar_auth_time');
+    
+    if (token && email && authTime) {
+      const timeDiff = Date.now() - parseInt(authTime);
+      const oneHour = 60 * 60 * 1000;
+      
+      if (timeDiff < oneHour) {
+        return { token, email };
+      } else {
+        clearAuthFromStorage();
+      }
+    }
+    
+    return null;
+  };
+  
+  const clearAuthFromStorage = () => {
+    localStorage.removeItem('calendar_access_token');
+    localStorage.removeItem('calendar_user_email');
+    localStorage.removeItem('calendar_auth_time');
+  };
+  
+  const initializeAuth = () => {
+    const savedAuth = loadAuthFromStorage();
+    if (savedAuth) {
+      setAccessToken(savedAuth.token);
+      setUserEmail(savedAuth.email);
+      setIsAuthenticated(true);
+    }
   };
   
   const handleGoogleAuth = () => {
-    console.log('🚀 Starting Google OAuth...');
     window.location.href = 'http://localhost:3000/auth/google';
+  };
+  
+  const handleDisconnect = () => {
+    clearAuthFromStorage();
+    setAccessToken(null);
+    setUserEmail(null);
+    setIsAuthenticated(false);
   };
   
   const fetchEvents = async () => {
@@ -99,6 +143,26 @@ function App() {
       setLoading(false);
     } catch (error) {
       setLoading(false);
+    }
+  };
+  
+  const syncFromGoogle = async (token, userId) => {
+    try {
+      await axios.post(`http://localhost:3000/events/sync?userId=${userId}&accessToken=${encodeURIComponent(token)}`);
+      await fetchEvents();
+    } catch (error) {
+      if (error.response?.status === 401) {
+        clearAuthFromStorage();
+        setIsAuthenticated(false);
+        setAccessToken(null);
+        setUserEmail(null);
+      }
+    }
+  };
+  
+  const refreshGoogleSync = async () => {
+    if (isAuthenticated && accessToken && userEmail) {
+      await syncFromGoogle(accessToken, userEmail);
     }
   };
   
@@ -154,21 +218,18 @@ function App() {
   const handleEventDelete = async (eventId) => {
     if (window.confirm('Delete this event?')) {
       try {
-        console.log('🗑️ Deleting event...');
-        console.log('🔑 Auth state:', { isAuthenticated, hasToken: !!accessToken, userEmail });
-        
         let endpoint = `http://localhost:3000/events/${eventId}`;
         if (isAuthenticated && accessToken) {
           endpoint += `?accessToken=${encodeURIComponent(accessToken)}`;
-          console.log('🔗 Delete URL with token:', endpoint.substring(0, 80) + '...');
-        } else {
-          console.log('🔗 Delete URL without token:', endpoint);
         }
         
         await axios.delete(endpoint);
         fetchEvents();
       } catch (error) {
-        console.error('❌ Delete error:', error);
+        if (error.response?.status === 401) {
+          clearAuthFromStorage();
+          setIsAuthenticated(false);
+        }
       }
     }
   };
@@ -178,10 +239,6 @@ function App() {
       if (!eventForm.title.trim()) {
         return;
       }
-      
-      console.log('💾 Saving event...');
-      console.log('🔑 Auth state:', { isAuthenticated, hasToken: !!accessToken, userEmail });
-      console.log('🔑 Token preview:', accessToken ? accessToken.substring(0, 30) + '...' : 'None');
       
       const [hours, minutes] = eventForm.time.split(':');
       const eventDateTime = new Date(selectedDate);
@@ -195,39 +252,30 @@ function App() {
         userId: 'test'
       };
       
-      console.log('📤 Event data:', eventData);
-      
       if (editingEvent) {
-        // Update existing event
         let endpoint = `http://localhost:3000/events/${editingEvent.id}`;
         if (isAuthenticated && accessToken) {
           endpoint += `?accessToken=${encodeURIComponent(accessToken)}`;
-          console.log('🔄 Update URL with token:', endpoint.substring(0, 80) + '...');
-        } else {
-          console.log('🔄 Update URL without token:', endpoint);
         }
         
-        const response = await axios.put(endpoint, eventData);
-        console.log('📥 Update response:', response.data);
+        await axios.put(endpoint, eventData);
       } else {
-        // Create new event
         let endpoint = 'http://localhost:3000/events';
         if (isAuthenticated && accessToken) {
           endpoint += `?accessToken=${encodeURIComponent(accessToken)}`;
-          console.log('➕ Create URL with token:', endpoint.substring(0, 80) + '...');
-        } else {
-          console.log('➕ Create URL without token:', endpoint);
         }
         
-        const response = await axios.post(endpoint, eventData);
-        console.log('📥 Create response:', response.data);
+        await axios.post(endpoint, eventData);
       }
       
       setDialogOpen(false);
       fetchEvents();
       
     } catch (error) {
-      console.error('❌ Save error:', error);
+      if (error.response?.status === 401) {
+        clearAuthFromStorage();
+        setIsAuthenticated(false);
+      }
     }
   };
   
@@ -237,15 +285,12 @@ function App() {
     setEventForm({ title: '', description: '', time: '10:00' });
   };
   
-  const syncFromGoogle = async (token, userId) => {
-    try {
-      console.log('🔄 Syncing from Google...');
-      const syncUrl = `http://localhost:3000/events/sync?userId=${userId}&accessToken=${encodeURIComponent(token)}`;
-      await axios.post(syncUrl);
-      fetchEvents();
-    } catch (error) {
-      console.error('❌ Sync error:', error);
-    }
+  const navigateMonth = (direction) => {
+    setCurrentDate(prev => {
+      const newDate = new Date(prev);
+      newDate.setMonth(prev.getMonth() + direction);
+      return newDate;
+    });
   };
   
   const monthNames = ['January', 'February', 'March', 'April', 'May', 'June',
@@ -260,33 +305,71 @@ function App() {
   return (
       <Box sx={{ minHeight: '100vh', p: 2, backgroundColor: '#f5f5f5' }}>
         <Box sx={{ maxWidth: 1200, mx: 'auto' }}>
-          {/* Debug Info */}
-          <Alert severity="info" sx={{ mb: 2 }}>
-            Debug: {debugInfo}
-          </Alert>
-          
-          {!isAuthenticated && (
+          {!isAuthenticated ? (
               <Box sx={{ mb: 2, textAlign: 'center' }}>
                 <Button
                     variant="contained"
                     onClick={handleGoogleAuth}
                     sx={{ backgroundColor: '#4285f4', color: 'white' }}
                 >
-                  🔗 Connect Google Calendar
+                  Connect Google Calendar
+                </Button>
+              </Box>
+          ) : (
+              <Box sx={{ mb: 2, display: 'flex', justifyContent: 'center', gap: 2 }}>
+                <Button
+                    variant="outlined"
+                    onClick={refreshGoogleSync}
+                    size="small"
+                >
+                  Sync from Google
+                </Button>
+                <Button
+                    variant="outlined"
+                    onClick={handleDisconnect}
+                    color="error"
+                    size="small"
+                >
+                  Disconnect
                 </Button>
               </Box>
           )}
           
           <Box sx={{ backgroundColor: 'white', borderRadius: 2, p: 3, boxShadow: 1 }}>
-            <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', mb: 3 }}>
-              <Typography variant="h4" component="h2" fontWeight="bold">
-                {monthNames[currentDate.getMonth()]} {currentDate.getFullYear()}
-              </Typography>
-              {isAuthenticated && (
-                  <Box sx={{ ml: 2, fontSize: 12, color: 'green' }}>
-                    ✅ Synced with Google ({userEmail})
-                  </Box>
-              )}
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+              <IconButton
+                  onClick={() => navigateMonth(-1)}
+                  sx={{ color: '#1976d2' }}
+              >
+                <ChevronLeft />
+              </IconButton>
+              
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                <Typography variant="h4" component="h2" fontWeight="bold">
+                  {monthNames[currentDate.getMonth()]} {currentDate.getFullYear()}
+                </Typography>
+                {isAuthenticated && (
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      <Box sx={{
+                        width: 8,
+                        height: 8,
+                        borderRadius: '50%',
+                        backgroundColor: 'green',
+                        animation: 'pulse 2s infinite'
+                      }} />
+                      <Typography variant="caption" sx={{ color: 'green', fontSize: 12 }}>
+                        Auto-Sync
+                      </Typography>
+                    </Box>
+                )}
+              </Box>
+              
+              <IconButton
+                  onClick={() => navigateMonth(1)}
+                  sx={{ color: '#1976d2' }}
+              >
+                <ChevronRight />
+              </IconButton>
             </Box>
             
             <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 1 }}>
@@ -408,11 +491,6 @@ function App() {
         <Dialog open={dialogOpen} onClose={handleDialogClose} maxWidth="sm" fullWidth>
           <DialogTitle>
             {editingEvent ? 'Edit Event' : 'Add Event'} - {selectedDate?.toDateString()}
-            {isAuthenticated && (
-                <Typography variant="caption" color="green" display="block">
-                  Will sync to Google Calendar
-                </Typography>
-            )}
           </DialogTitle>
           
           <DialogContent>

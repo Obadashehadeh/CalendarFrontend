@@ -1,34 +1,138 @@
 .App {
-  text-align: center;
+  min-height: 100vh;
+  background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
 }
 
-.App-header {
-  background-color: #282c34;
-  padding: 20px;
-  color: white;
-}
-
-.App-header h1 {
-  margin: 0;
-}
-
-.App-header p {
-  margin: 10px 0 0 0;
-  opacity: 0.8;
-}
-
-/* Calendar styling */
 .rbc-calendar {
   background: white;
   border: 1px solid #ddd;
-  border-radius: 8px;
+  border-radius: 12px;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  overflow: hidden;
+}
+
+.rbc-header {
+  background: #f8f9fa;
+  border-bottom: 1px solid #dee2e6;
+  padding: 8px;
+  font-weight: 600;
+  color: #495057;
+}
+
+.rbc-month-view, .rbc-time-view {
+  border: none;
 }
 
 .rbc-event {
-  background-color: #3174ad;
-  border-radius: 4px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  border: none;
+  border-radius: 6px;
+  color: white;
+  font-size: 12px;
+  padding: 2px 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.rbc-event:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
 }
 
 .rbc-selected {
-  background-color: #265985;
+  background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+}
+
+.rbc-today {
+  background-color: #fff3cd;
+}
+
+.rbc-off-range-bg {
+  background: #f8f9fa;
+}
+
+.rbc-date-cell {
+  padding: 8px;
+}
+
+.rbc-date-cell.rbc-off-range {
+  color: #adb5bd;
+}
+
+.rbc-show-more {
+  color: #6c757d;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.rbc-toolbar {
+  background: white;
+  padding: 15px;
+  border-bottom: 1px solid #dee2e6;
+  margin-bottom: 0;
+}
+
+.rbc-toolbar button {
+  background: #6c757d;
+  color: white;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 6px;
+  margin: 0 2px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.rbc-toolbar button:hover {
+  background: #5a6268;
+  transform: translateY(-1px);
+}
+
+.rbc-toolbar button.rbc-active {
+  background: #007bff;
+}
+
+.rbc-toolbar-label {
+  font-size: 18px;
+  font-weight: 600;
+  color: #495057;
+}
+
+@media (max-width: 768px) {
+  .rbc-toolbar {
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .rbc-toolbar button {
+    padding: 6px 12px;
+    font-size: 14px;
+  }
+
+  .App h1 {
+    font-size: 1.8rem;
+  }
+}
+
+
+.MuiDialog-paper {
+  border-radius: 12px !important;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f1f1f1;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #c1c1c1;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #a8a8a8;
 }

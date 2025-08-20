@@ -9,13 +9,17 @@ import {
   TextField,
   Box,
   Typography,
-  IconButton
+  IconButton,
+  Snackbar,
+  Alert,
+  CircularProgress
 } from '@mui/material';
-import { Edit, Delete, Add, ChevronLeft, ChevronRight } from '@mui/icons-material';
+import { Edit, Delete, Add, ChevronLeft, ChevronRight, Sync } from '@mui/icons-material';
 
 function App() {
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingEvent, setEditingEvent] = useState(null);
   const [selectedDate, setSelectedDate] = useState(null);
@@ -28,6 +32,8 @@ function App() {
   const [accessToken, setAccessToken] = useState(null);
   const [userEmail, setUserEmail] = useState(null);
   const [currentDate, setCurrentDate] = useState(new Date());
+  const [notification, setNotification] = useState({ open: false, message: '', severity: 'info' });
+  const [webhookStatus, setWebhookStatus] = useState({ active: false, channels: 0 });
   
   useEffect(() => {
     initializeAuth();
@@ -37,10 +43,11 @@ function App() {
   useEffect(() => {
     let syncInterval;
     
-    if (isAuthenticated && accessToken && userEmail) {
+    // Only use periodic sync if webhook is not active
+    if (isAuthenticated && accessToken && userEmail && !webhookStatus.active) {
       syncInterval = setInterval(() => {
-        syncFromGoogle(accessToken, userEmail);
-      }, 30000); // Sync every 30 seconds
+        syncFromGoogle(accessToken, userEmail, true); // Silent sync
+      }, 60000); // Every 60 seconds
     }
     
     return () => {
@@ -48,7 +55,7 @@ function App() {
         clearInterval(syncInterval);
       }
     };
-  }, [isAuthenticated, accessToken, userEmail]);
+  }, [isAuthenticated, accessToken, userEmail, webhookStatus.active]);
   
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
@@ -61,9 +68,18 @@ function App() {
       setUserEmail(userId);
       setIsAuthenticated(true);
       window.history.replaceState({}, document.title, window.location.pathname);
-      syncFromGoogle(token, userId);
+      
+      // Initial sync and webhook setup after auth
+      setTimeout(async () => {
+        await syncFromGoogle(token, userId, false);
+        await setupWebhook(token, userId);
+      }, 1000);
     }
   }, []);
+  
+  const showNotification = (message, severity = 'info') => {
+    setNotification({ open: true, message, severity });
+  };
   
   const saveAuthToStorage = (token, email) => {
     localStorage.setItem('calendar_access_token', token);
@@ -102,6 +118,8 @@ function App() {
       setAccessToken(savedAuth.token);
       setUserEmail(savedAuth.email);
       setIsAuthenticated(true);
+      // Check webhook status
+      checkWebhookStatus(savedAuth.email);
     }
   };
   
@@ -114,11 +132,51 @@ function App() {
     setAccessToken(null);
     setUserEmail(null);
     setIsAuthenticated(false);
+    setWebhookStatus({ active: false, channels: 0 });
+    showNotification('Disconnected from Google Calendar', 'info');
+  };
+  
+  const setupWebhook = async (token, userId) => {
+    try {
+      showNotification('Setting up real-time sync...', 'info');
+      
+      // Use the actual user email for webhook setup
+      const response = await axios.post(`http://localhost:3000/webhook/setup/${userId}?accessToken=${encodeURIComponent(token)}`);
+      
+      if (response.data.success) {
+        showNotification('Real-time sync enabled! Changes in Google Calendar will now appear instantly.', 'success');
+        setWebhookStatus({ active: true, channels: 1 });
+      }
+    } catch (error) {
+      console.error('Webhook setup failed:', error);
+      showNotification('Real-time sync setup failed. Using periodic sync instead.', 'warning');
+    }
+  };
+  
+  const checkWebhookStatus = async (userId) => {
+    try {
+      // Use the actual user email for webhook status check
+      const response = await axios.get(`http://localhost:3000/webhook/status/${userId}`);
+      
+      if (response.data.success) {
+        const activeChannels = response.data.channels.filter(ch => !ch.isExpired).length;
+        setWebhookStatus({
+          active: activeChannels > 0,
+          channels: activeChannels
+        });
+      }
+    } catch (error) {
+      console.error('Failed to check webhook status:', error);
+      setWebhookStatus({ active: false, channels: 0 });
+    }
   };
   
   const fetchEvents = async () => {
     try {
-      const response = await axios.get('http://localhost:3000/events?userId=test');
+      setLoading(true);
+      // Use the actual user email instead of hardcoded "test"
+      const userId = userEmail || 'test';
+      const response = await axios.get(`http://localhost:3000/events?userId=${userId}`);
       
       const formattedEvents = response.data.data.map(event => {
         let startDate;
@@ -140,29 +198,48 @@ function App() {
       });
       
       setEvents(formattedEvents);
-      setLoading(false);
     } catch (error) {
+      showNotification('Failed to load events', 'error');
+      console.error('Failed to fetch events:', error);
+    } finally {
       setLoading(false);
     }
   };
   
-  const syncFromGoogle = async (token, userId) => {
+  const syncFromGoogle = async (token, userId, silent = false) => {
     try {
+      if (!silent) {
+        setSyncing(true);
+        showNotification('Syncing with Google Calendar...', 'info');
+      }
+      
       await axios.post(`http://localhost:3000/events/sync?userId=${userId}&accessToken=${encodeURIComponent(token)}`);
       await fetchEvents();
+      
+      if (!silent) {
+        showNotification('Successfully synced with Google Calendar', 'success');
+      }
     } catch (error) {
       if (error.response?.status === 401) {
         clearAuthFromStorage();
         setIsAuthenticated(false);
         setAccessToken(null);
         setUserEmail(null);
+        showNotification('Authentication expired. Please reconnect.', 'error');
+      } else if (!silent) {
+        showNotification('Failed to sync with Google Calendar', 'error');
+      }
+      console.error('Sync failed:', error);
+    } finally {
+      if (!silent) {
+        setSyncing(false);
       }
     }
   };
   
   const refreshGoogleSync = async () => {
     if (isAuthenticated && accessToken && userEmail) {
-      await syncFromGoogle(accessToken, userEmail);
+      await syncFromGoogle(accessToken, userEmail, false);
     }
   };
   
@@ -224,12 +301,17 @@ function App() {
         }
         
         await axios.delete(endpoint);
-        fetchEvents();
+        showNotification('Event deleted successfully', 'success');
+        await fetchEvents();
       } catch (error) {
         if (error.response?.status === 401) {
           clearAuthFromStorage();
           setIsAuthenticated(false);
+          showNotification('Authentication expired. Please reconnect.', 'error');
+        } else {
+          showNotification('Failed to delete event', 'error');
         }
+        console.error('Delete failed:', error);
       }
     }
   };
@@ -237,6 +319,7 @@ function App() {
   const saveEvent = async () => {
     try {
       if (!eventForm.title.trim()) {
+        showNotification('Event title is required', 'warning');
         return;
       }
       
@@ -249,7 +332,7 @@ function App() {
         description: eventForm.description.trim(),
         startDate: eventDateTime.toISOString(),
         endDate: new Date(eventDateTime.getTime() + 3600000).toISOString(),
-        userId: 'test'
+        userId: userEmail || 'test'
       };
       
       if (editingEvent) {
@@ -259,6 +342,7 @@ function App() {
         }
         
         await axios.put(endpoint, eventData);
+        showNotification('Event updated successfully', 'success');
       } else {
         let endpoint = 'http://localhost:3000/events';
         if (isAuthenticated && accessToken) {
@@ -266,16 +350,21 @@ function App() {
         }
         
         await axios.post(endpoint, eventData);
+        showNotification('Event created successfully', 'success');
       }
       
       setDialogOpen(false);
-      fetchEvents();
+      await fetchEvents();
       
     } catch (error) {
       if (error.response?.status === 401) {
         clearAuthFromStorage();
         setIsAuthenticated(false);
+        showNotification('Authentication expired. Please reconnect.', 'error');
+      } else {
+        showNotification('Failed to save event', 'error');
       }
+      console.error('Save failed:', error);
     }
   };
   
@@ -299,7 +388,16 @@ function App() {
   const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   
   if (loading) {
-    return <Box></Box>;
+    return (
+        <Box sx={{
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+          minHeight: '100vh'
+        }}>
+          <CircularProgress />
+        </Box>
+    );
   }
   
   return (
@@ -314,15 +412,28 @@ function App() {
                 >
                   Connect Google Calendar
                 </Button>
+                <Typography variant="body2" sx={{ mt: 1, color: 'text.secondary' }}>
+                  Connect to sync events with Google Calendar
+                </Typography>
               </Box>
           ) : (
-              <Box sx={{ mb: 2, display: 'flex', justifyContent: 'center', gap: 2 }}>
+              <Box sx={{ mb: 2, display: 'flex', justifyContent: 'center', gap: 2, flexWrap: 'wrap' }}>
                 <Button
                     variant="outlined"
                     onClick={refreshGoogleSync}
+                    disabled={syncing}
+                    startIcon={syncing ? <CircularProgress size={16} /> : <Sync />}
                     size="small"
                 >
-                  Sync from Google
+                  {syncing ? 'Syncing...' : 'Manual Sync'}
+                </Button>
+                <Button
+                    variant="outlined"
+                    onClick={() => setupWebhook(accessToken, userEmail)}
+                    disabled={syncing || webhookStatus.active}
+                    size="small"
+                >
+                  {webhookStatus.active ? 'Real-time Active ✓' : 'Enable Real-time Sync'}
                 </Button>
                 <Button
                     variant="outlined"
@@ -330,8 +441,16 @@ function App() {
                     color="error"
                     size="small"
                 >
-                  Disconnect
+                  Disconnect Google
                 </Button>
+                <Typography variant="caption" sx={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  color: 'text.secondary',
+                  ml: 1
+                }}>
+                  Connected as: {userEmail}
+                </Typography>
               </Box>
           )}
           
@@ -344,7 +463,7 @@ function App() {
                 <ChevronLeft />
               </IconButton>
               
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexDirection: { xs: 'column', sm: 'row' } }}>
                 <Typography variant="h4" component="h2" fontWeight="bold">
                   {monthNames[currentDate.getMonth()]} {currentDate.getFullYear()}
                 </Typography>
@@ -354,11 +473,14 @@ function App() {
                         width: 8,
                         height: 8,
                         borderRadius: '50%',
-                        backgroundColor: 'green',
-                        animation: 'pulse 2s infinite'
+                        backgroundColor: webhookStatus.active ? 'green' : (syncing ? 'orange' : 'gray'),
+                        animation: syncing ? 'pulse 2s infinite' : 'none'
                       }} />
-                      <Typography variant="caption" sx={{ color: 'green', fontSize: 12 }}>
-                        Auto-Sync
+                      <Typography variant="caption" sx={{
+                        color: webhookStatus.active ? 'green' : (syncing ? 'orange' : 'gray'),
+                        fontSize: 12
+                      }}>
+                        {webhookStatus.active ? 'Real-time Sync Active' : (syncing ? 'Syncing...' : 'Manual Sync Only')}
                       </Typography>
                     </Box>
                 )}
@@ -416,7 +538,7 @@ function App() {
                                 <Box
                                     key={event.id}
                                     sx={{
-                                      backgroundColor: '#667eea',
+                                      backgroundColor: event.resource?.googleCalendarId ? '#4285f4' : '#667eea',
                                       color: 'white',
                                       p: 0.5,
                                       mb: 0.5,
@@ -426,7 +548,7 @@ function App() {
                                       alignItems: 'center',
                                       justifyContent: 'space-between',
                                       '&:hover': {
-                                        backgroundColor: '#5a67d8'
+                                        backgroundColor: event.resource?.googleCalendarId ? '#3367d6' : '#5a67d8'
                                       }
                                     }}
                                     onClick={(e) => e.stopPropagation()}
@@ -439,6 +561,9 @@ function App() {
                                       textOverflow: 'ellipsis'
                                     }}>
                                       {event.time} {event.title}
+                                      {event.resource?.googleCalendarId && (
+                                          <span style={{ opacity: 0.7 }}> 📅</span>
+                                      )}
                                     </Typography>
                                   </Box>
                                   
@@ -501,6 +626,7 @@ function App() {
                   value={eventForm.title}
                   onChange={(e) => setEventForm({ ...eventForm, title: e.target.value })}
                   autoFocus
+                  required
               />
               
               <TextField
@@ -519,6 +645,21 @@ function App() {
                   value={eventForm.description}
                   onChange={(e) => setEventForm({ ...eventForm, description: e.target.value })}
               />
+              
+              {editingEvent?.resource?.googleCalendarId && (
+                  <Box sx={{
+                    p: 1,
+                    backgroundColor: '#e3f2fd',
+                    borderRadius: 1,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 1
+                  }}>
+                    <Typography variant="caption" color="primary">
+                      📅 This event is synced with Google Calendar
+                    </Typography>
+                  </Box>
+              )}
             </Box>
           </DialogContent>
           
@@ -529,11 +670,22 @@ function App() {
                   Delete
                 </Button>
             )}
-            <Button onClick={saveEvent} variant="contained">
+            <Button onClick={saveEvent} variant="contained" disabled={!eventForm.title.trim()}>
               {editingEvent ? 'Update' : 'Create'}
             </Button>
           </DialogActions>
         </Dialog>
+        
+        <Snackbar
+            open={notification.open}
+            autoHideDuration={4000}
+            onClose={() => setNotification({ ...notification, open: false })}
+            anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+        >
+          <Alert onClose={() => setNotification({ ...notification, open: false })} severity={notification.severity}>
+            {notification.message}
+          </Alert>
+        </Snackbar>
       </Box>
   );
 }
